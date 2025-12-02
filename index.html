@@ -30,7 +30,6 @@
             justify-content: space-between; box-shadow: 0 0 10px rgba(0,0,0,0.5);
             height: 40px;
         }
-        /* BPM */
         #bpm-val { font-family: monospace; font-size: 16px; color: #00FFFF; width: 80px; text-align: right; }
         input[type=range] { flex-grow: 1; margin: 0 10px; accent-color: #00FFFF; height: 30px; }
         .play-btn {
@@ -243,6 +242,7 @@
     let bindState = Array.from({length: ROWS}, () => Array(COLS).fill(false)); 
     let score = 0;
     
+    const MATCH_MIN = 3; 
     let muteChord = false;
     let muteBeat = false;
     
@@ -263,7 +263,7 @@
     let nextPieceData = null; 
     const DIRS = [{x: 0, y: -1}, {x: 1, y: 0}, {x: 0, y: 1}, {x: -1, y: 0}];
     
-    let bpm = 150; // Init 150
+    let bpm = 150; 
     let isPlaying = false;
     let nextNoteTime = 0.0;
     let totalBeats = 0;
@@ -513,10 +513,11 @@
         }
 
         if (gameState === STATE_PLAY) {
+            area.classList.remove('bursting');
+            
             const currentBars = Math.floor(currentBeat / 4);
             const barsLeft = (BIND_POINT_INTERVAL_BARS - currentBars);
 
-            area.classList.remove('bursting');
             if (barsLeft <= 1) area.classList.add('warning'); else area.classList.remove('warning');
             
             let pct = (currentBeat / totalCycle) * 100;
@@ -533,8 +534,9 @@
         } else if (gameState === STATE_BURST) {
             area.classList.remove('warning'); area.classList.add('bursting');
             bar.style.width = '100%';
-            // バースト中は残り拍数表示したいが、scheduler外からは正確に取れないので固定テキスト
-            txt.innerText = "BIND BURST";
+            const beatsLeft = burstEndBeat - totalBeats;
+            if(beatsLeft <= 4 && beatsLeft > 0) txt.innerText = `RESUME IN ${beatsLeft}`;
+            else txt.innerText = "BIND BURST";
         }
     }
 
@@ -723,8 +725,59 @@
         
         applyGravity();
         
-        if(check2x2Transformation(false)) {
+        // ★ 2x2 Check & Transform
+        let mask = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+        let found2x2 = false;
+        let found1x4 = false;
+        let found4x1 = false;
+
+        // 2x2
+        for(let y=0; y<ROWS-1; y++) {
+            for(let x=0; x<COLS-1; x++) {
+                let c = board[y][x];
+                if(c >= 1 && c <= 5) {
+                    if(board[y][x+1] === c && board[y+1][x] === c && board[y+1][x+1] === c) {
+                        mask[y][x]=true; mask[y][x+1]=true; mask[y+1][x]=true; mask[y+1][x+1]=true;
+                        found2x2 = true;
+                    }
+                }
+            }
+        }
+        // 1x4
+        for(let x=0; x<COLS; x++) {
+            for(let y=0; y<ROWS-3; y++) {
+                let c = board[y][x];
+                if(c >= 1 && c <= 5) {
+                    if(board[y+1][x] === c && board[y+2][x] === c && board[y+3][x] === c) {
+                        for(let k=0; k<4; k++) mask[y+k][x]=true;
+                        found1x4 = true;
+                    }
+                }
+            }
+        }
+        // 4x1
+        for(let y=0; y<ROWS; y++) {
+            for(let x=0; x<COLS-3; x++) {
+                let c = board[y][x];
+                if(c >= 1 && c <= 5) {
+                    if(board[y][x+1] === c && board[y][x+2] === c && board[y][x+3] === c) {
+                        for(let k=0; k<4; k++) mask[y][x+k]=true;
+                        found4x1 = true;
+                    }
+                }
+            }
+        }
+
+        if (found2x2 || found1x4 || found4x1) {
             playQuantizedSE('transform');
+            for(let y=0; y<ROWS; y++) {
+                for(let x=0; x<COLS; x++) {
+                    if(mask[y][x]) {
+                        board[y][x] = BLOCK_WHITE_NOTE;
+                        spawnParticles(x, y, BLOCK_WHITE_NOTE, 5);
+                    }
+                }
+            }
         }
 
         const bindRes = updateBindState();
@@ -735,35 +788,6 @@
         updateControlsState();
     }
     
-    function check2x2Transformation(checkOnly) {
-        let found = false;
-        for(let y=0; y<ROWS-1; y++) {
-            for(let x=0; x<COLS-1; x++) {
-                let c = board[y][x];
-                if(c >= 1 && c <= 5) {
-                    if(board[y][x+1] === c && board[y+1][x] === c && board[y+1][x+1] === c) {
-                        if(!checkOnly) {
-                            board[y][x] = BLOCK_WHITE_NOTE;
-                            board[y][x+1] = BLOCK_WHITE_NOTE;
-                            board[y+1][x] = BLOCK_WHITE_NOTE;
-                            board[y+1][x+1] = BLOCK_WHITE_NOTE;
-                            
-                            spawnParticles(x, y, BLOCK_WHITE_NOTE, 8);
-                            spawnParticles(x+1, y, BLOCK_WHITE_NOTE, 8);
-                            spawnParticles(x, y+1, BLOCK_WHITE_NOTE, 8);
-                            spawnParticles(x+1, y+1, BLOCK_WHITE_NOTE, 8);
-                            
-                            found = true;
-                        } else {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        return found;
-    }
-
     function updateControlsState() {
         const area = document.getElementById('controls-area');
         if (gameState === STATE_PLAY && isPlaying) {
